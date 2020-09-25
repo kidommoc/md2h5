@@ -8,8 +8,8 @@ v1.0.0
 - [x] image `v0.0.3`
 - [x] html `v0.0.2`
 
-- [ ] bold `v0.0.4`
-- [ ] italic `v0.0.4`
+- [x] bold `v0.0.4`
+- [x] italic `v0.0.4`
 - [x] code `v0.0.2`
 - [x] link `v0.0.3`
 - [ ] line break `v0.0.5`

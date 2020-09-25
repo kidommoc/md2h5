@@ -105,7 +105,7 @@ const escape = (pack) => {
         c = pack.reader.next();
     }
     if (c != ';')
-        return '&amp;' + isCode ? '#' : '' + temp;
+        return '&amp;' + (isCode ? '#' : '') + temp;
     pack.reader.next();
     if (isCode)
         return String.fromCharCode(Number.parseInt(temp));
@@ -162,9 +162,14 @@ const heading = (pack) => {
     while (pack.reader.next() == ' ' || pack.reader.now == '\t')
         ;
     var s = '<h' + count + ' class="markdown">';
-    pack.reader.rollback(1);
-    while (pack.reader.next() != '\n' && !pack.reader.end)
-        s += char(pack.reader.now);
+    while (!pack.reader.end && pack.reader.now != '\n') {
+        if (pack.reader.now == '&')
+            s += escape(pack);
+        else {
+            s += char(pack.reader.now);
+            pack.reader.next();
+        }
+    }
     pack.reader.next();
     return s + '</h' + count + '>';
 }
@@ -194,6 +199,8 @@ const image = (pack) => {
                 alt += code(pack); break;
             case '*':
                 alt += boldAndItalic(pack, ']'); break;
+            case '&':
+                alt += escape(pack); break;
             default:
                 alt += char(pack.reader.now);
                 pack.reader.next(); break;
@@ -263,13 +270,85 @@ const html = (pack) => {
     return s;
 }
 
-const bold = (pack) => {
-}
-
-const italic = (pack) => {
-}
-
 const boldAndItalic = (pack, end) => {
+    var count = 1;
+    while (pack.reader.next() == '*' && !pack.reader.end) {
+        ++count;
+        if (count == 4) {
+            pack.reader.next();
+            return '';
+        }
+    }
+    var s1 = '', s2 = '', stack = [], top = 0;
+    if (count == 3) {
+        stack[0] = [1, ''];
+        stack[1] = [2, ''];
+        top = 1;
+    }
+    else
+        stack[0] = [count, ''];
+    while (!pack.reader.end && pack.reader.now != '\n') {
+        switch (pack.reader.now) {
+            case '[':
+                stack[top][1] += link(pack); break;
+            case '`':
+                stack[top][1] += code(pack); break;
+            case '&':
+                stack[top][1] += escape(pack); break;
+            case '*':
+                var count = 1;
+                while (pack.reader.next() == '*' && !pack.reader.end) {
+                    ++count;
+                    if (count == 4)
+                        break;
+                }
+                if (top == 1) {
+                    if (count >= 3) {
+                        var tag1 = stack[0][0] == 1 ? 'em' : 'strong';
+                        var tag2 = stack[1][0] == 1 ? 'em' : 'strong';
+                        return '<' + tag1 + ' class="markdown">' + stack[0][1]
+                            + '<' + tag2 + ' class="markdown">' + stack[1][1]
+                            + '</' + tag2 + '></' + tag1 + '>';
+                    }
+                    var newItalic = false;
+                    if (stack[1][0] != count && stack[0][1] == '')
+                        [stack[0][0], stack[1][0]] = [stack[1][0], stack[0][0]];
+                    if (count > stack[1][0])
+                        newItalic = true;
+                    var tag = stack[1][0] == 1 ? 'em' : 'strong';
+                    stack[0][1] += '<' + tag + ' class="markdown">'
+                        + stack[1][1] + '</' + tag + '>';
+                    if (newItalic)
+                        stack[1] = [1, ''];
+                    else {
+                        stack[1] = undefined;
+                        top = 0;
+                    }
+                }
+                else {
+                    var tag = stack[0][0] == 1 ? 'em' : 'strong';
+                    switch (count) {
+                        case 4:
+                            break;
+                        case 3:
+                            pack.reader.rollback(count - stack[0][0]);
+                            return '<' + tag + ' class="markdown">'
+                                + stack[0][1] + '</' + tag + '>';
+                        default:
+                            if (count == stack[0][0])
+                                return '<' + tag + ' class="markdown">'
+                                    + stack[0][1] + '</' + tag + '>';
+                            stack[1] = [count, '']
+                            top = 1;
+                            break;
+                    }
+                }
+                break;
+            default:
+                stack[top][1] += char(pack.reader.now);
+                pack.reader.next(); break;
+        }
+    }
 }
 
 const code = (pack) => {
@@ -290,6 +369,8 @@ const link = (pack) => {
                 text += code(pack); break;
             case '*':
                 text += boldAndItalic(pack, ']'); break;
+            case '&':
+                text += escape(pack); break;
             default:
                 text += char(pack.reader.now);
                 pack.reader.next(); break;
