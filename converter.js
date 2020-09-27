@@ -114,24 +114,31 @@ const escape = (pack) => {
 
 const paragraph = (pack) => {
     var s = '<p class="markdown">', c = pack.reader.now;
-    var lineStart = true, lineMerge = false;
+    var lineStart = true, spaceCount = 0;
     while (!pack.reader.end) {
         if (c == '\n') {
             c = pack.reader.next();
-            lineMerge = true;
             lineStart = true;
             if (c == '\n')
                 break;
         }
         if (lineStart) {
+            if (spaceCount >= 2) {
+                s = s.substr(0, s.length - spaceCount);
+                s += '<br />';
+            }
+            else
+                if (s[s.length - 1] != ' ')
+                    s += ' ';
             while (!pack.reader.end && (c == ' ' || c == '\t'))
                 c = pack.reader.next();
             lineStart = false;
+            spaceCount = 0;
         }
-        if (lineMerge && s[s.length - 1] != ' ') {
-            s += ' ';
-            lineMerge = false;
-        }
+        if (c == ' ')
+            ++spaceCount;
+        else
+            spaceCount = 0;
         switch (c) {
             case '*':
                 s += boldAndItalic(pack, '\n'); break;
@@ -141,6 +148,8 @@ const paragraph = (pack) => {
                 s += link(pack); break;
             case '&':
                 s += escape(pack); break;
+            case '<':
+                s += br(pack); break;
             case '\\':
                 c = pack.reader.next();
             default:
@@ -183,7 +192,50 @@ const uList = (pack) => {
 const oList = (pack) => {
 }
 
-const codeBlock = (pack) => {
+const codeBlock = (pack, n, c) => {
+    var s = '<codeblock class="markdown" style="display: block"><code><pre>';
+    while (!pack.reader.end) {
+        pack.reader.rollback(1);
+        while (pack.reader.next() != '\n' && !pack.reader.end)
+            s += char(pack.reader.now);
+        var count = 0;
+        while (pack.reader.next() == c && count < n && !pack.reader.end)
+            ++count;
+        if (count < n)
+            return s + '</pre></code></codeblock>';
+        s += '\n';
+    }
+    return s + '</pre></code></codeblock>';
+}
+
+const codeBlock2 = (pack) => {
+    var s = '<codeblock class="markdown" style="display: block"><code><pre>';
+    while (!pack.reader.end) {
+        pack.reader.rollback(1);
+        while (pack.reader.next() != '\n' && !pack.reader.end)
+            s += char(pack.reader.now);
+        if (pack.reader.next() != '`') {
+            s += '\n';
+            continue;
+        }
+        while (pack.reader.now == '`') {
+            var count = 1;
+            while (pack.reader.next() == '`' && count < 3 && !pack.reader.end)
+                ++count;
+            if (count > 2) {
+                while (!pack.reader.end && pack.reader.now != '\n')
+                    pack.reader.next();
+                return s + '</pre></code></codeblock>';
+            }
+            s += '\n';
+            while (count--)
+                s += '`';
+            if (pack.reader.end)
+                return s + '</pre></code></codeblock>';
+            pack.reader.next();
+        }
+    }
+    return s + '</pre></code></codeblock>';
 }
 
 const image = (pack) => {
@@ -415,6 +467,29 @@ const link = (pack) => {
     return s;
 }
 
+const br = (pack) => {
+    var s = pack.reader.next();
+    s += pack.reader.next();
+    pack.reader.next();
+    if (s != 'br')
+        return '&lt;' + s;
+    while (!pack.reader.end && pack.reader.now == ' ') {
+        s += ' ';
+        pack.reader.next();
+    }
+    if (pack.reader.end || (pack.reader.now != '/' && pack.reader.now != '>'))
+        return '&lt;' + s;
+    s += pack.reader.now;
+    pack.reader.next();
+    if (s[s.length - 1] == '>')
+        return '<br />';
+    if (pack.reader.now == '>') {
+        pack.reader.next();
+        return '<br />';
+    }
+    return '&lt;' + s;
+}
+
 const root = (pack) => {
     var s = '';
     while (!pack.reader.end) {
@@ -432,8 +507,8 @@ const root = (pack) => {
             case '*':
                 s += uList(pack); break;
             case ' ':
-                var count = 0;
-                while (pack.reader.next() == ' ')
+                var count = 1;
+                while (pack.reader.next() == ' ' && !pack.reader.end)
                     ++count;
                 if (pack.reader.end || pack.reader.now == '\n')
                     break;
@@ -441,13 +516,25 @@ const root = (pack) => {
                     s += paragraph(pack);
                     break;
                 }
-                rollback(count);
+                s += codeBlock(pack, count, ' '); break;
             case '\t':
-                s += codeBlock(pack); break;
+                var count = 1;
+                while (pack.reader.next() == '\t' && !pack.reader.end)
+                    ++count;
+                s += codeBlock(pack, count, '\t'); break;
             case '!':
                 s += image(pack); break;
             case '<':
                 s += html(pack); break;
+            case '`':
+                var count = 1;
+                while (pack.reader.next() == '`' && !pack.reader.end)
+                    ++count;
+                if (count > 2) {
+                    s += codeBlock2(pack); break;
+                }
+                else
+                    pack.reader.rollback(count);
             default:
                 s += paragraph(pack); break;
         }
