@@ -2,8 +2,8 @@ v1.0.0
 - [x] paragraph `v0.0.1`
 - [x] heading123 `v0.0.1`
 - [ ] quote `v1.0.0`
-- [ ] list unordered `v0.0.6`
-- [ ] list ordered `v0.0.6`
+- [x] list unordered `v0.0.6`
+- [x] list ordered `v0.0.6`
 - [x] codeblock `v0.0.5`
 - [x] image `v0.0.3`
 - [x] html `v0.0.2`

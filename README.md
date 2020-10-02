@@ -1,6 +1,11 @@
 # Md2h5
 
-Md2h5 is a single-file js library to convert markdown to html. Support used in both node and website (see the bottom of `converter.js`)
+[1]: https://www.markdownguide.com/
+[2]: https://www.markdown.com.cn/
+
+Md2h5 is a single-file js library to convert markdown to html. Support used in both node and website (see the top of `converter.js`)
+
+Markdown syntax can be checked [here][1]. Chinese version [here][2].
 
 ## Convertion Rules
 
@@ -8,7 +13,7 @@ Paragraph: `<p class="markdown">...</p>`
 
 Heading: `<hx class="markdown">...<hx>`
 
-> Note that only support `h1` to `h3`. Smaller ones will be converted to `h3`
+> Note that only support `h1` to `h3`. Those smaller will be converted to `h3`
 
 Quote: `<blockquote class="markdown">...<hx>`
 
