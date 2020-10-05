@@ -1,14 +1,8 @@
-// when used in nodejs
+// please comment this function when not used in nodejs
 exports.convert = (md) => {
-    var reader = new Reader(md);
-    const links = genLinks(reader);
-    reader.rollback(md.length);
-    var pack = {reader: reader, links: links};
-    return root(pack);
+    return convert(md);
 };
 
-/*
-//when used in browser
 const convert = (md) => {
     var reader = new Reader(md);
     const links = genLinks(reader);
@@ -16,7 +10,6 @@ const convert = (md) => {
     var pack = {reader: reader, links: links};
     return root(pack);
 };
-*/
 
 class Reader {
     constructor(s) {
@@ -278,6 +271,25 @@ const heading = (pack) => {
 }
 
 const quote = (pack, jump) => {
+    var s = '<blockquote class="markdown">';
+    while (pack.reader.now == '>') {
+        if (pack.reader.next() != ' ') {
+            pack.reader.rollback(1);
+            return paragraph(pack);
+        }
+        while ([' ', '\t'].includes(pack.reader.next()) && !pack.reader.end)
+            ;
+        if (!pack.reader.end)
+            s += listItem(pack, jump);
+        for (var i = 0; i < jump.length; ++i) {
+            if (pack.reader.end || pack.reader.now != jump[i]) {
+                pack.reader.rollback(i);
+                return s + '</blockquote>';
+            }
+            pack.reader.next();
+        }
+    }
+    return s + '</blockquote>';
 }
 
 const uList = (pack, jump) => {
@@ -290,7 +302,7 @@ const uList = (pack, jump) => {
         while ([' ', '\t'].includes(pack.reader.next()) && !pack.reader.end)
             ;
         if (!pack.reader.end)
-            s += listItem(pack, jump);
+            s += '<li class="markdown">' + listItem(pack, jump) + '</li>';
         for (var i = 0; i < jump.length; ++i) {
             if (pack.reader.end || pack.reader.now != jump[i]) {
                 pack.reader.rollback(i);
@@ -318,7 +330,7 @@ const oList = (pack, jump) => {
         while ([' ', '\t'].includes(pack.reader.next()) && !pack.reader.end)
             ;
         if (!pack.reader.end)
-            s += listItem(pack, jump);
+            s += '<li class="markdown">' + listItem(pack, jump) + '</li>';
         for (var i = 0; i < jump.length; ++i) {
             if (pack.reader.end || pack.reader.now != jump[i]) {
                 pack.reader.rollback(i);
@@ -331,13 +343,13 @@ const oList = (pack, jump) => {
 }
 
 const listItem = (pack, jump) => {
-    var s =  '<li class="markdown">' + paragraph(pack);
+    var s =  paragraph(pack);
     jumpEmptyLines(pack.reader);
     while ([' ', '\t'].includes(pack.reader.now)) {
         for (var i = 0; i < jump.length; ++i) {
             if (pack.reader.end || pack.reader.now != jump[i]) {
                 pack.reader.rollback(i);
-                return s + '</li>';
+                return s;
             }
             pack.reader.next();
         }
@@ -351,7 +363,7 @@ const listItem = (pack, jump) => {
             }
             if (count < 4) {
                 pack.reader.rollback(count);
-                return s + '</li>';
+                return s;
             }
             pack.reader.rollback(count);
         }
@@ -360,7 +372,7 @@ const listItem = (pack, jump) => {
         pack.reader.rollback(jump.length);
         s += block(pack, jump + temp);
     }
-    return s + '</li>';
+    return s;
 }
 
 // starts with 4 spaces or 1 tab
@@ -398,6 +410,9 @@ const codeBlock = (pack, jump) => {
 // starts with ```
 const codeBlock2 = (pack, jump) => {
     var s = '<codeblock class="markdown" style="display: block"><code><pre>';
+    while (!pack.reader.end && pack.reader.now != '\n')
+        pack.reader.next();
+    pack.reader.next();
     while (!pack.reader.end) {
         while (pack.reader.now != '\n' && !pack.reader.end) {
             s += char(pack.reader.now);
@@ -628,7 +643,7 @@ const boldAndItalic = (pack, end) => {
 }
 
 const code = (pack) => {
-    var s = '<codeline class="markdown"><code>';
+    var s = '<codeline class="markdown" style="display: inline"><code>';
     while (pack.reader.next() != '`' && pack.reader.now != '\n' && !pack.reader.end) {
         s += char(pack.reader.now);
     }
@@ -693,10 +708,16 @@ const link = (pack) => {
 
 const br = (pack) => {
     var s = pack.reader.next();
+    if (s != 'b') {
+        pack.reader.rollback(1);
+        return '&lt';
+    }
     s += pack.reader.next();
+    if (s != 'br') {
+        pack.reader.rollback(2);
+        return '&lt';
+    }
     pack.reader.next();
-    if (s != 'br')
-        return '&lt;' + s;
     while (!pack.reader.end && pack.reader.now == ' ') {
         s += ' ';
         pack.reader.next();
