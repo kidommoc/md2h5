@@ -1,15 +1,20 @@
-// please comment this function when not used in nodejs
-exports.convert = (md) => {
-    return convert(md);
-};
+var reader, links;
+
+// please remove this line when not used in nodejs
+module.exports = (md) => convert(md)
 
 const convert = (md) => {
-    var reader = new Reader(md);
-    const links = genLinks(reader);
+    md = removeTab(md);
+    reader = new Reader(md);
+    reader.rollback(md.length * 5);
+    genLinks();
     reader.rollback(md.length);
-    var pack = {reader: reader, links: links};
-    return root(pack);
-};
+    let s = '';
+    jumpEmptyLines('');
+    while (!reader.end)
+        s += block('');
+    return s;
+}
 
 class Reader {
     constructor(s) {
@@ -19,10 +24,25 @@ class Reader {
     get now() { return this._s[this._pos]; }
     get end() { return this._pos >= this._s.length; }
     get pos() { return this._pos; }
+    get position() {
+        let line = 1, column = 0;
+        for (let i = 0; i < this._pos; ++i) {
+            ++column;
+            if (this._s[i] == '\n') {
+                ++line;
+                column = 0;
+            }
+        }
+        return { line: line, column: column };
+    }
     next() {
         if (!this.end)
             ++this._pos;
         return this._s[this._pos];
+    }
+    goahead(n) {
+        this._pos += n;
+        this._pos = this.end ? s.length : this._pos;
     }
     rollback(n) {
         this._pos -= n;
@@ -35,45 +55,25 @@ class Reader {
     }
 }
 
-const genLinks = (reader) => {
-    var links = [];
-    while (!reader.end) {
-        while (reader.now == '[') {
-            var name = '', link = '', start = reader.pos;
-            while (![']', '\n'].includes(reader.next()))
-                name += reader.now;
-            if (reader.now == ']' && reader.next() == ':') {
-                while ([' ', '\t'].includes(reader.next()))
-                    ;
-                reader.rollback(1);
-                while (!['\n', ' '].includes(reader.next()) && !reader.end)
-                    link += reader.now;
-                var title = '';
-                if (reader.now == ' ') {
-                    while ([' ', '\t'].includes(reader.next()))
-                        ;
-                    if (reader.now == '"')
-                        while (!['"', '\n'].includes(reader.next()) && !reader.end)
-                            title += reader.now;
+const removeTab = (s) => {
+    let count = 0;
+    for (let i = 0; i < s.length; ++i) {
+        if (s[i] == '\n')
+            count = 0;
+        else {
+            ++count;
+            if (s[i] == '\t') {
+                let temp = ' ';
+                while (count % 4 != 0) {
+                    ++count;
+                    temp += ' ';
                 }
-                links[name] = {link: link, title: title};
-                reader.next();
-                reader.del(start, reader.pos);
-                if (reader.now == '[')
-                    continue;
+                s = s.slice(0, i) + temp + s.slice(i + 1);
+                i += temp.length - 1;
             }
-            break;
-        }
-        var count = 1;
-        while (!reader.end && count < 2) {
-            if (reader.now == '\n')
-                ++count;
-            else
-                count = 0;
-            reader.next();
         }
     }
-    return links;
+    return s;
 }
 
 const isNumber = (c) => {
@@ -82,21 +82,8 @@ const isNumber = (c) => {
     return false;
 }
 
-const jumpEmptyLines = (r) => {
-    while (!r.end) {
-        var count = 0;
-        while (!r.end && [' ', '\t'].includes(r.now)) {
-            ++count;
-            r.next();
-        }
-        if (r.end)
-            break;
-        if (r.now != '\n') {
-            r.rollback(count);
-            break;
-        }
-        r.next();
-    }
+const isEmpty = (c) => {
+    return c && c == ' ';
 }
 
 const char = (c) => {
@@ -116,108 +103,591 @@ const char = (c) => {
     }
 }
 
-const escape = (pack) => {
-    var c = pack.reader.next(), temp = '', count = 0, isCode = false;
-    if (c == '#') {
-        c = pack.reader.next();
-        ++count;
-        isCode = true;
+const jumpEmpty = () => {
+    let s = '';
+    while (isEmpty(reader.now)) {
+        s += reader.now;
+        reader.next();
     }
-    while (!pack.reader.end && ![';', '\n'].includes(c) && count < 10) {
-        if (isCode && !isNumber(c))
-            break;
-        temp += c;
-        c = pack.reader.next();
-    }
-    if (c != ';')
-        return '&amp;' + (isCode ? '#' : '') + temp;
-    pack.reader.next();
-    if (isCode)
-        return String.fromCharCode(Number.parseInt(temp));
-    return '&' + temp + ';';
-}
-
-const root = (pack) => {
-    var s = '';
-    jumpEmptyLines(pack.reader);
-    while (!pack.reader.end)
-        s += block(pack, '');
     return s;
 }
 
-const block = (pack, jump) => {
-    for (var i = 0; i < jump.length; ++i) {
-        if (pack.reader.end || pack.reader.now != jump[i]) {
-            pack.reader.rollback(i);
-            return '';
+// '>': quote
+// '-': list
+// ' ': codeblock
+const jumpPrefix = (prefix, empty = false) => {
+    if (reader.end)
+        return 0;
+    while (reader.pos) {
+        reader.rollback(1);
+        if (reader.now == '\n') {
+            reader.next();
+            break;
         }
-        pack.reader.next();
     }
-    if (isNumber(pack.reader.now))
-        return oList(pack, jump);
-    switch (pack.reader.now) {
-        case '#':
-            return heading(pack);
-        case '>':
-            return quote(pack, jump);
-        case '*':
-            return uList(pack, jump);
-        case '!':
-            return image(pack);
-        case '<':
-            return html(pack);
-        case '\t':
-            pack.reader.next();
-            return codeBlock(pack, jump + '\t');
-        case '`':
-            var count = 1;
-            while (pack.reader.next() == '`' && !pack.reader.end)
+    let position = reader.position
+    let e = -1, count = 0;
+    for (let i = prefix.length - 1; i >= 0; --i)
+        if (prefix[i] == '>') {
+            e = i;
+            break;
+        }
+
+    for (let i = 0; i <= e; ++i) {
+        let temp = 0;
+        switch (prefix[i]) {
+            case '>':
+                while (temp < 4 && isEmpty(reader.now)) {
+                    ++temp;
+                    reader.next();
+                }
+                if (temp < 4 && !reader.end && reader.now == '>') {
+                    reader.next();
+                    count += temp + 1;
+                }
+                else {
+                    reader.rollback(count + temp);
+                    return false;
+                }
+                break;
+            case '-':
+            case ' ':
+                while (temp < 4 && !reader.end && reader.now == ' ') {
+                    ++temp;
+                    reader.next();
+                }
+                if (temp < 4) {
+                    reader.rollback(count + temp);
+                    return false;
+                }
+                else
+                    count += temp;
+                break;
+        }
+    }
+
+    if (empty) {
+        let temp = 0;
+        while (!reader.end && isEmpty(reader.now)) {
+            ++temp;
+            reader.next();
+        }
+        if (reader.end || reader.now == '\n') {
+            return count + temp;
+        }
+        else
+            reader.rollback(temp);
+    }
+
+    for (let i = e + 1; i < prefix.length; ++i) {
+        let temp = 0;
+        while (temp < 4 && !reader.end && reader.now == ' ') {
+            ++temp;
+            reader.next();
+        }
+        if (temp < 4) {
+            reader.rollback(count + temp);
+            return false;
+        }
+        else
+            count += temp;
+    }
+    return count;
+}
+
+const jumpEmptyLines = (jump) => {
+    if (reader.end)
+        return 0;
+    let start = [reader.now, reader.pos]
+    let jumped = 0, count = 0;
+    while (!reader.end) {
+        count = jumpPrefix(jump, true);
+        if (count === false)
+            break;
+        count += jumpEmpty().length;
+        if (reader.end) {
+            count = 0;
+            ++jumped;
+            break;
+        }
+        if (reader.now != '\n')
+            break;
+        ++jumped;
+        reader.next();
+    }
+    reader.rollback(count);
+    return jumped;
+}
+
+const linkContent = (end) => {
+    if (reader.end)
+        return [undefined, '']
+    let s = '', link = '', title = '';
+    // <link
+    if (reader.now == '<') {
+        s = reader.now;
+        while (!['>', ' ', end, '\n'].includes(reader.next()) && !reader.end)
+            link += char(reader.now);
+        s += link;
+        // <not-link
+        if (reader.end || reader.now != '>')
+            return [undefined, s];
+        s += reader.now;
+        reader.next();
+    }
+    // link
+    else {
+        link = reader.now;
+        while (![' ', end, '\n'].includes(reader.next()) && !reader.end)
+            link += char(reader.now);
+        s += link;
+    }
+
+    s += jumpEmpty();
+    // link or <link>
+    if (reader.end || reader.now == end)
+        return [link, title, s]
+    let c = reader.now;
+    // not link or <not> link
+    if (!['(', '"', "'"].includes(c))
+        return [undefined, s]
+
+    c = c == '(' ? ')' : c;
+    while (![c, end, '\n'].includes(reader.next()) && !reader.end)
+        title += char(reader.now);
+    s += title;
+    // link or <link> "title" or 'title' or (title)
+    if (reader.now == c) {
+        reader.next();
+        return [link, title, s + c];
+    }
+    // not or <not> (link or "link or 'link
+    if (reader.end || reader.now == end)
+        return [undefined, s];
+
+}
+
+const genLinks = () => {
+    links = [];
+    while (!reader.end) {
+        if (reader.now == '[') {
+            let name = '', start = reader.pos;
+            while (![']', '\n'].includes(reader.next()) && !reader.end)
+                name += reader.now;
+            if (reader.end)
+                break;
+            if (reader.now == ']' && reader.next() == ':') {
+                reader.next();
+                jumpEmpty();
+                let link, title;
+                [link, title] = linkContent('\n');
+                if (link) {
+                    jumpEmpty();
+                    if (reader.end || reader.now == '\n') {
+                        links[name] = { link: link, title: title };
+                        reader.next()
+                        reader.del(start, reader.pos)
+                        if (reader.now == '[')
+                            continue;
+                    }
+                }
+            }
+        }
+        let count = 1;
+        while (!reader.end && count < 2) {
+            if (reader.now == '\n') {
                 ++count;
-            if (count > 2)
-                return codeBlock2(pack, jump);
+                reader.next();
+                jumpEmpty();
+                reader.rollback(1)
+            }
             else
-                pack.reader.rollback(count);
+                count = 0;
+            reader.next();
+        }
+    }
+}
+
+const escape = () => {
+    let c = reader.next(), temp = '', count = 0, isCode = false;
+    if (c == '#') {
+        c = reader.next();
+        ++count;
+        isCode = true;
+    }
+    while (!reader.end && ![';', '\n'].includes(c) && count < 10) {
+        if (isCode && !isNumber(c))
+            break;
+        temp += c;
+        c = reader.next();
+    }
+    if (c != ';')
+        return `&amp;${isCode ? '#' : '' + temp}`;
+    reader.next();
+    if (isCode)
+        return String.fromCharCode(Number.parseInt(temp));
+    return `&${temp};`;
+}
+
+const block = (jump) => {
+    if (reader.end)
+        return '';
+    let count = 0
+    if (isNumber(reader.now))
+        return oList(jump);
+    switch (reader.now) {
         case ' ':
-            var count = 1;
-            while (pack.reader.next() == ' ' && count < 4 && !pack.reader.end)
+            count = 0;
+            while (count < 4 && isEmpty(reader.now)) {
                 ++count;
-            if (pack.reader.end)
+                reader.next();
+            }
+            if (reader.end)
                 return '';
-            if (count > 3)
-                return codeBlock(pack, jump + '    ');
-            pack.reader.rollback(count);
+            if (count >= 4)
+                return codeBlock1(jump);
+            reader.rollback(count);
+        case '#':
+            return heading(jump);
+        case '>':
+            return quote(jump);
+        case '-':
+        case '*':
+        case '+':
+            return uList(jump);
+        /*
+        case '<':
+            return html();
+        */
+        case '`':
+            count = 1;
+            while (reader.next() == '`')
+                ++count;
+            if (count >= 3)
+                return codeBlock2(jump);
+            else
+                reader.rollback(count);
         default:
-            return paragraph(pack);
+            return paragraph(jump);
     }
 }
 
 // block elements
 // end at the 1st char, 1st line of the next block
 
-const paragraph = (pack) => {
-    var s = '<p class="markdown">', c = pack.reader.now;
-    var lineStart = false, spaceCount = 0;
-    while (!pack.reader.end && [' ', '\t'].includes(c))
-        c = pack.reader.next();
-    while (!pack.reader.end) {
-        if (c == '\n') {
-            c = pack.reader.next();
-            lineStart = true;
-            if (c == '\n')
-                break;
+const paragraph = (jump) => {
+    let s = '';
+    if (reader.now == '!') {
+        let temp = text();
+        if (temp.startsWith == '<img' && temp.endsWith(' />') && !temp.endsWith('<br />'))
+            return temp;
+        else {
+            s += ` ${temp}`;
+            if (jumpEmptyLines(jump) || jumpPrefix(jump) === false)
+                return `<p class="markdown">${s.slice(1)}</p>`;
         }
-        if (lineStart) {
-            if (spaceCount >= 2) {
-                s = s.substr(0, s.length - spaceCount);
-                s += '<br />';
+    }
+    while (!reader.end) {
+        s += `${s.endsWith('<br />') ? '' : ' '}${text()}`;
+        if (jumpEmptyLines(jump) || jumpPrefix(jump) === false)
+            break;
+    }
+    return `<p class="markdown">${s.slice(1)}</p>`;
+}
+
+const heading = (jump) => {
+    let count = 1;
+    while (reader.next() == '#')
+        ++count;
+    if (!isEmpty(reader.now)) {
+        reader.rollback(count);
+        return paragraph(jump);
+    }
+    jumpEmpty();
+    if (reader.end) {
+        reader.rollback(count);
+        return paragraph();
+    }
+    let s = `<h${count > 3 ? 3 : count} class="markdown">`;
+    while (!reader.end && reader.now != '\n') {
+        if (reader.now == '&')
+            s += escape();
+        else {
+            s += char(reader.now);
+            reader.next();
+        }
+    }
+    reader.next();
+    jumpEmptyLines(jump);
+    return s + `</h${count > 3 ? 3 : count}>`;
+}
+
+const quote = (jump) => {
+    let s = '';
+    while (!reader.end) {
+        jumpEmptyLines(jump + '>');
+        if (jumpPrefix(jump + '>') === false)
+            return '';
+        let temp = 0;
+        while (temp < 4 && isEmpty(reader.now)) {
+            ++temp;
+            reader.next();
+        }
+
+        if (reader.end)
+            break;
+        if (temp >= 4)
+            s += codeBlock1(jump + '>');
+        else
+            s += block(jump + '>');
+
+        if (jumpPrefix(jump + '>') === false)
+            break;
+    }
+    jumpEmptyLines(jump);
+    return `<blockquote class="markdown">${s}</blockquote>`;
+}
+
+const uList = (jump) => {
+    let s = '', p = undefined;
+    while (!reader.end) {
+        if (reader.next() != ' ') {
+            reader.rollback(1);
+            return paragraph(jump);
+        }
+
+        while (isEmpty(reader.next()) && !reader.end)
+            ;
+        if (!reader.end) {
+            let temp;
+            [temp, p] = listItem(jump, () => {
+                let flag = false;
+                if (['*', '-', '+'].includes(reader.now)) {
+                    if (isEmpty(reader.next()) && !reader.end)
+                        flag = true;
+                    reader.rollback(1);
+                }
+                return flag;
+            }, p);
+            s += `<li class="markdown">${temp}</li>`;
+        }
+
+        if (jumpPrefix(jump) === false)
+            break;
+        let temp = jumpEmpty();
+        if (!['*', '-', '+'].includes(reader.now)) {
+            reader.rollback(temp);
+            break;
+        }
+    }
+    jumpEmptyLines(jump);
+    return `<ul class="markdown">${s}</ul>`;
+}
+
+const oList = (jump) => {
+    let s = '', p = undefined;
+    while (!reader.end) {
+        let temp = 0;
+        while (!reader.end && isNumber(reader.now)) {
+            ++temp;
+            reader.next();
+        }
+        if (reader.now != '.') {
+            reader.rollback(temp);
+            return paragraph(jump);
+        }
+        if (reader.next() != ' ') {
+            reader.rollback(temp + reader.end ? 0 : 1);
+            return paragraph(jump);
+        }
+
+        while (isEmpty(reader.next()) && !reader.end)
+            ;
+        if (!reader.end) {
+            let temp;
+            [temp, p] = listItem(jump, () => {
+                let temp = 0;
+                while (!reader.end && isNumber(reader.now)) {
+                    ++temp;
+                    reader.next();
+                }
+                if (reader.end || reader.now != '.') {
+                    reader.rollback(temp);
+                    return false;
+                }
+                if (reader.next() != ' ') {
+                    if (!reader.end)
+                        ++temp;
+                    reader.rollback(temp);
+                    return false;
+                }
+                reader.rollback(temp);
+                return true;
+            }, p);
+            s += `<li class="markdown">${temp}</li>`;
+        }
+
+        if (jumpPrefix(jump) === false)
+            break;
+        temp = jumpEmpty();
+        if (!isNumber(reader.now)) {
+            reader.rollback(temp);
+            break;
+        }
+    }
+    jumpEmptyLines(jump);
+    return `<ol class="markdown">${s}</ol>`;
+}
+
+const listItem = (jump, liStart, p) => {
+    let s = '';
+    while (!reader.end) {
+        s += ' ' + text();
+        if (jumpEmptyLines(jump)) {
+            if (p === undefined)
+                p = true;
+            if (p)
+                s = ` <p class="markdown">${s.slice(1)}</p>`;
+            if (jumpPrefix(jump) === false)
+                return [s.slice(1), p];
+            let count = 0;
+            while (count < 4 && !reader.end && reader.now == ' ') {
+                ++count;
+                reader.next();
             }
-            else
-                if (s[s.length - 1] != ' ')
-                    s += ' ';
-            while (!pack.reader.end && [' ', '\t'].includes(c))
-                c = pack.reader.next();
-            lineStart = false;
-            spaceCount = 0;
+            if (reader.end)
+                return [s.slice(1), p];
+            if (count < 4) {
+                reader.rollback(count);
+                return [s.slice(1), p];
+            }
+            break;
+        }
+        else
+            if (reader.end || jumpPrefix(jump) === false || liStart()) {
+                if (p === undefined)
+                    p = false;
+                return [s.slice(1), p];
+            }
+    }
+
+    s = s.slice(1);
+    while (!reader.end) {
+        s += block(jump + '-');
+        if (jumpPrefix(jump + '-') === false)
+            break;
+    }
+    return [s, p];
+}
+
+// starts with 4 spaces or 1 tab
+const codeBlock1 = (jump) => {
+    let s = '<codeblock class="markdown" style="display: block"><code><pre>';
+    while (!reader.end) {
+        while (!reader.end && reader.now != '\n') {
+            s += char(reader.now);
+            reader.next();
+        }
+        if (reader.end)
+            break;
+        reader.next();
+        let count = jumpEmptyLines(jump + ' ');
+        if (jumpPrefix(jump + ' ') === false)
+            break;
+        for (let i = 0; i < count; ++i)
+            s += '\n';
+    }
+    return `${s}</pre></code></codeblock>`;
+}
+
+// starts with ```
+const codeBlock2 = (jump) => {
+    let language = '';
+    while (!reader.end && reader.now != '\n') {
+        language += reader.now;
+        reader.next();
+    }
+    let s = '<codeblock class="markdown" style="display: block"'
+    s += `${language == '' ? '' : ` language="${language}"`}><code><pre>`;
+    reader.next();
+    while (!reader.end) {
+        while (reader.now != '\n' && !reader.end) {
+            s += char(reader.now);
+            reader.next();
+        }
+        if (reader.end)
+            break;
+        reader.next();
+        let count = jumpEmptyLines(jump);
+        if (jumpPrefix(jump) === false)
+            break;
+        if (reader.now == '`') {
+            let count = 1;
+            while (reader.next() == '`' && count < 3 && !reader.end)
+                ++count;
+            if (count >= 3) {
+                while (!reader.end && reader.now != '\n')
+                    reader.next();
+                reader.next();
+                jumpEmptyLines(jump);
+                break;
+            }
+            reader.rollback(count);
+        }
+        for (let i = 0; i < count; ++i)
+            s += '\n';
+    }
+    return `${s}</pre></code></codeblock>`;
+}
+
+/*
+const html = () => {
+    let s = '<', tag = '';
+    while (reader.next() != '>' && reader.now != ' ' && !reader.end)
+        tag += reader.now;
+    s += tag;
+    while (!reader.end) {
+        s += reader.now;
+        if (reader.now == '/') {
+            let count = 0;
+            while (count < tag.length && tag[count] == reader.next()) {
+                ++count;
+                s += reader.now;
+            }
+            if (count >= tag.length && [' ', '>'].includes(reader.next())) {
+                while (!reader.end && !['>', '\n'].includes(reader.now)) {
+                    s += reader.now;
+                    reader.next();
+                }
+                if (reader.now == '>') {
+                    while (reader.next() != '\n' && !reader.end)
+                        ;
+                    jumpEmptyLines('');
+                    return s + '>';
+                }
+            }
+            s += reader.now;
+        }
+        reader.next();
+    }
+    return s;
+}
+*/
+
+// inline elements
+// end at the next char
+
+const text = () => {
+    jumpEmpty();
+    let s = '', c = reader.now, spaceCount = 0;
+    while (!reader.end) {
+        if (c == '\n') {
+            c = reader.next();
+            if (spaceCount)
+                s = s.slice(0, -spaceCount);
+            if (spaceCount >= 2)
+                s += '<br />';
+            break;
         }
         if (c == ' ')
             ++spaceCount;
@@ -225,349 +695,45 @@ const paragraph = (pack) => {
             spaceCount = 0;
         switch (c) {
             case '*':
-                s += boldAndItalic(pack, '\n'); break;
+                s += boldAndItalic('\n'); break;
             case '`':
-                s += code(pack); break;
+                s += code(); break;
             case '[':
-                s += link(pack); break;
+                s += link(); break;
+            case '!':
+                c = reader.next();
+                if (c == '[')
+                    s += image();
+                else
+                    s += '!'
+                break;
             case '&':
-                s += escape(pack); break;
+                s += escape(); break;
             case '<':
-                s += br(pack); break;
+                s += br(); break;
             case '\\':
-                c = pack.reader.next();
+                c = reader.next();
             default:
                 s += char(c);
-                c = pack.reader.next(); break;
+                reader.next(); break;
         }
-        c = pack.reader.now;
-    }
-    jumpEmptyLines(pack.reader);
-    return s + '</p>';
-}
-
-const heading = (pack) => {
-    var count = 1, c = '';
-    while (pack.reader.next() == '#')
-        ++count;
-    pack.reader.rollback(1);
-    while ([' ', '\t'].includes(pack.reader.next()) && !pack.reader.end)
-        ;
-    if (pack.reader.end) {
-        pack.reader.rollback(count);
-        return paragraph(pack);
-    }
-    var s = '<h' + (count > 3 ? 3 : count) + ' class="markdown">';
-    while (!pack.reader.end && pack.reader.now != '\n') {
-        if (pack.reader.now == '&')
-            s += escape(pack);
-        else {
-            s += char(pack.reader.now);
-            pack.reader.next();
-        }
-    }
-    jumpEmptyLines(pack.reader);
-    return s + '</h' + (count > 3 ? 3 : count) + '>';
-}
-
-const quote = (pack, jump) => {
-    var s = '<blockquote class="markdown">';
-    while (pack.reader.now == '>') {
-        if (pack.reader.next() != ' ') {
-            pack.reader.rollback(1);
-            return paragraph(pack);
-        }
-        while ([' ', '\t'].includes(pack.reader.next()) && !pack.reader.end)
-            ;
-        if (!pack.reader.end)
-            s += listItem(pack, jump);
-        for (var i = 0; i < jump.length; ++i) {
-            if (pack.reader.end || pack.reader.now != jump[i]) {
-                pack.reader.rollback(i);
-                return s + '</blockquote>';
-            }
-            pack.reader.next();
-        }
-    }
-    return s + '</blockquote>';
-}
-
-const uList = (pack, jump) => {
-    var s = '<ul class="markdown">';
-    while (pack.reader.now == '*') {
-        if (pack.reader.next() != ' ') {
-            pack.reader.rollback(1);
-            return paragraph(pack);
-        }
-        while ([' ', '\t'].includes(pack.reader.next()) && !pack.reader.end)
-            ;
-        if (!pack.reader.end)
-            s += '<li class="markdown">' + listItem(pack, jump) + '</li>';
-        for (var i = 0; i < jump.length; ++i) {
-            if (pack.reader.end || pack.reader.now != jump[i]) {
-                pack.reader.rollback(i);
-                return s + '</ul>';
-            }
-            pack.reader.next();
-        }
-    }
-    return s + '</ul>';
-}
-
-const oList = (pack, jump) => {
-    var s = '<ol class="markdown">';
-    while (isNumber(pack.reader.now)) {
-        while (isNumber(pack.reader.next()))
-            ;
-        if (pack.reader.now != '.') {
-            pack.reader.rollback(1);
-            return paragraph(pack);
-        }
-        if (pack.reader.next() != ' ') {
-            pack.reader.rollback(2);
-            return paragraph(pack);
-        }
-        while ([' ', '\t'].includes(pack.reader.next()) && !pack.reader.end)
-            ;
-        if (!pack.reader.end)
-            s += '<li class="markdown">' + listItem(pack, jump) + '</li>';
-        for (var i = 0; i < jump.length; ++i) {
-            if (pack.reader.end || pack.reader.now != jump[i]) {
-                pack.reader.rollback(i);
-                return s + '</ol>';
-            }
-            pack.reader.next();
-        }
-    }
-    return s + '</ol>';
-}
-
-const listItem = (pack, jump) => {
-    var s =  paragraph(pack);
-    jumpEmptyLines(pack.reader);
-    while ([' ', '\t'].includes(pack.reader.now)) {
-        for (var i = 0; i < jump.length; ++i) {
-            if (pack.reader.end || pack.reader.now != jump[i]) {
-                pack.reader.rollback(i);
-                return s;
-            }
-            pack.reader.next();
-        }
-        var temp = '';
-        if (pack.reader.now == ' ') {
-            var count = 1;
-            temp += ' ';
-            while (pack.reader.next() == ' ' && count < 4 && !pack.reader.end) {
-                ++count;
-                temp += ' ';
-            }
-            if (count < 4) {
-                pack.reader.rollback(count);
-                return s;
-            }
-            pack.reader.rollback(count);
-        }
-        else if (pack.reader.now == '\t')
-            temp = '\t';
-        pack.reader.rollback(jump.length);
-        s += block(pack, jump + temp);
+        c = reader.now;
     }
     return s;
 }
 
-// starts with 4 spaces or 1 tab
-const codeBlock = (pack, jump) => {
-    var s = '<codeblock class="markdown" style="display: block"><code><pre>';
-    while (!pack.reader.end) {
-        while (!pack.reader.end && pack.reader.now != '\n') {
-            s += char(pack.reader.now);
-            pack.reader.next();
-        }
-        if (pack.reader.end)
-            break;
-        var count = 0, temp = '';
-        while (pack.reader.now == '\n') {
-            count = 0;
-            temp += '\n';
-            while ([' ', '\t'].includes(pack.reader.next()))
-                ++count;
-        }
-        pack.reader.rollback(count);
-        for (var i = 0; i < jump.length; ++i) {
-            if (pack.reader.end || pack.reader.now != jump[i]) {
-                pack.reader.rollback(i);
-                jumpEmptyLines(pack.reader);
-                return s + '</pre></code></codeblock>';
-            }
-            pack.reader.next();
-        }
-        s += temp;
-    }
-    jumpEmptyLines(pack.reader);
-    return s + '</pre></code></codeblock>';
-}
-
-// starts with ```
-const codeBlock2 = (pack, jump) => {
-    var s = '<codeblock class="markdown" style="display: block"><code><pre>';
-    while (!pack.reader.end && pack.reader.now != '\n')
-        pack.reader.next();
-    pack.reader.next();
-    while (!pack.reader.end) {
-        while (pack.reader.now != '\n' && !pack.reader.end) {
-            s += char(pack.reader.now);
-            pack.reader.next();
-        }
-        if (pack.reader.end)
-            break;
-        for (var i = 0; i < jump.length; ++i) {
-            if (pack.reader.next() == '\n')
-                break;
-            if (pack.reader.end || pack.reader.now != jump[i]) {
-                pack.reader.rollback(i + 1);
-                jumpEmptyLines(pack.reader);
-                return s + '</pre></code></codeblock>';
-            }
-        }
-        if (pack.reader.next() == '`') {
-            var count = 1;
-            while (pack.reader.next() == '`' && count < 3 && !pack.reader.end)
-                ++count;
-            if (count > 2) {
-                while (!pack.reader.end && pack.reader.now != '\n')
-                    pack.reader.next();
-                jumpEmptyLines(pack.reader);
-                return s + '</pre></code></codeblock>';
-            }
-            pack.reader.rollback(count);
-        }
-        s += '\n';
-    }
-    jumpEmptyLines(pack.reader);
-    return s + '</pre></code></codeblock>';
-}
-
-const image = (pack) => {
-    if (pack.reader.next() != '['){
-        pack.reader.rollback(1);
-        return paragraph(pack, 0);
-    }
-    var alt = '', n = 1;
-    pack.reader.next();
-    while (!pack.reader.end && pack.reader.now != ']' && pack.reader.now != '\n') {
-        switch (pack.reader.now) {
-            case '`':
-                alt += code(pack); break;
-            case '*':
-                alt += boldAndItalic(pack, ']'); break;
-            case '&':
-                alt += escape(pack); break;
-            default:
-                alt += char(pack.reader.now);
-                pack.reader.next(); break;
-        }
-        ++n;
-    }
-
-    // ![not a image
-    if (pack.reader.end || pack.reader.now == '\n') {
-        jumpEmptyLines(pack.reader);
-        return '<p class="markdown>![' + alt + '</p>';
-    }
-    // ![image with only alt]
-    if (pack.reader.next() != '(' && pack.reader.now != '[') {
-        while (!pack.reader.end && pack.reader.now != '\n')
-            pack.reader.next();
-        jumpEmptyLines(pack.reader);
-        return '<img class="markdown" alt="' + alt + '" />';
-    }
-
-    var link = '', c = pack.reader.now == '[' ? ']' : ')';
-    while (pack.reader.next() != c && pack.reader.now != ' '
-        && pack.reader.now != '\n' && !pack.reader.end)
-        link += pack.reader.now;
-    s = '<img class="markdown" src="';
-
-    // ![img alt][1]
-    if (c == ']') {
-        pack.reader.rollback(1);
-        while (pack.reader.next() != '\n' && !pack.reader.end)
-            ;
-        s += pack.links[link].link + '"';
-        if (pack.links[link].title != '')
-            s += ' title="' + pack.links[link].title + '"';
-        s += ' alt="' + alt + '" />';
-        jumpEmptyLines(pack.reader);
-        return s;
-    }
-
-    // ![image alt](link
-    var title = '';
-    if (pack.reader.now == ' ') {
-        while (pack.reader.next() == ' ' || pack.reader.now == '\t')
-            ;
-        // ![image alt](link "title
-        if (pack.reader.now == '"')
-            while (pack.reader.next() != '"' && pack.reader.now != '\n' && !pack.reader.end)
-                title += pack.reader.now;
-    }
-    while (pack.reader.next() != '\n' && !pack.reader.end)
-        ;
-    s += link + '"';
-    if (title != '')
-        s += ' title="' + title + '"';
-    s += ' alt="' + alt + '" />';
-    jumpEmptyLines(pack.reader);
-    return s;
-}
-
-const html = (pack) => {
-    var s = '<', tag = '';
-    while (pack.reader.next() != '>' && pack.reader.now != ' ' && !pack.reader.end)
-        tag += pack.reader.now;
-    s += tag;
-    while (!pack.reader.end) {
-        s += pack.reader.now;
-        if (pack.reader.now == '/') {
-            var count = 0;
-            while (count < tag.length && tag[count] == pack.reader.next()) {
-                ++count;
-                s += pack.reader.now;
-            }
-            if (count >= tag.length && [' ', '>'].includes(pack.reader.next())) {
-                while (!pack.reader.end && !['>', '\n'].includes(pack.reader.now)) {
-                    s += pack.reader.now;
-                    pack.reader.next();
-                }
-                if (pack.reader.now == '>') {
-                    while (pack.reader.next() != '\n' && !pack.reader.end)
-                        ;
-                    jumpEmptyLines(pack.reader);
-                    return s + '>';
-                }
-            }
-            s += pack.reader.now;
-        }
-        pack.reader.next();
-    }
-    return s;
-}
-
-// inline elements
-// end at the next char
-
-const boldAndItalic = (pack, end) => {
-    var count = 1;
+const boldAndItalic = (end) => {
+    let count = 1;
     if (typeof boldAndItalic.map != undefined)
         boldAndItalic.map = ['', 'em', 'strong'];
-    while (pack.reader.next() == '*' && !pack.reader.end) {
+    while (reader.next() == '*' && !reader.end) {
         ++count;
         if (count == 4) {
-            pack.reader.next();
+            reader.next();
             return '';
         }
     }
-    var s1 = '', s2 = '', stack = [], top = 0;
+    let s1 = '', s2 = '', stack = [], top = 0;
     if (count == 3) {
         stack[0] = [1, ''];
         stack[1] = [2, ''];
@@ -575,40 +741,45 @@ const boldAndItalic = (pack, end) => {
     }
     else
         stack[0] = [count, ''];
-    while (!pack.reader.end) {
-        switch (pack.reader.now) {
+    while (!reader.end) {
+        switch (reader.now) {
             case '\n':
             case end:
-                break;
+                let s = '';
+                for (let i = top; i >= 0; --i) {
+                    s = stack[i][1] + s;
+                    for (let j = 0; j < stack[i][0]; ++j)
+                        s = '*' + s;
+                }
+                return s;
             case '[':
-                stack[top][1] += link(pack); break;
+                stack[top][1] += link(); break;
             case '`':
-                stack[top][1] += code(pack); break;
+                stack[top][1] += code(); break;
             case '&':
-                stack[top][1] += escape(pack); break;
+                stack[top][1] += escape(); break;
             case '*':
-                var count = 1;
-                while (pack.reader.next() == '*' && !pack.reader.end) {
+                let count = 1;
+                while (reader.next() == '*' && !reader.end) {
                     ++count;
                     if (count == 4)
                         break;
                 }
                 if (top == 1) {
                     if (count >= 3) {
-                        var tag1 = boldAndItalic.map[stack[0][0]],
+                        let tag1 = boldAndItalic.map[stack[0][0]],
                             tag2 = boldAndItalic.map[stack[1][0]];
-                        return '<' + tag1 + ' class="markdown">' + stack[0][1]
-                            + '<' + tag2 + ' class="markdown">' + stack[1][1]
-                            + '</' + tag2 + '></' + tag1 + '>';
+                        return `<${tag1} class="markdown">${stack[0][1]}`
+                            + `<${tag2} class="markdown">${stack[1][1]}`
+                            + `</${tag2}></${tag1}>`;
                     }
-                    var newItalic = false;
+                    let newItalic = false;
                     if (stack[1][0] != count && stack[0][1] == '')
                         [stack[0][0], stack[1][0]] = [stack[1][0], stack[0][0]];
                     if (count > stack[1][0])
                         newItalic = true;
-                    var tag = boldAndItalic.map[stack[1][0]];
-                    stack[0][1] += '<' + tag + ' class="markdown">'
-                        + stack[1][1] + '</' + tag + '>';
+                    let tag = boldAndItalic.map[stack[1][0]];
+                    stack[0][1] += `<${tag} class="markdown">${stack[1][1]}</${tag}>`;
                     if (newItalic)
                         stack[1] = [1, ''];
                     else {
@@ -617,18 +788,16 @@ const boldAndItalic = (pack, end) => {
                     }
                 }
                 else {
-                    var tag = boldAndItalic.map[stack[0][0]];
+                    let tag = boldAndItalic.map[stack[0][0]];
                     switch (count) {
                         case 4:
                             break;
                         case 3:
-                            pack.reader.rollback(count - stack[0][0]);
-                            return '<' + tag + ' class="markdown">'
-                                + stack[0][1] + '</' + tag + '>';
+                            reader.rollback(count - stack[0][0]);
+                            return `<${tag} class="markdown">${stack[0][1]}</${tag}>`;
                         default:
                             if (count == stack[0][0])
-                                return '<' + tag + ' class="markdown">'
-                                    + stack[0][1] + '</' + tag + '>';
+                                return `<${tag} class="markdown">${stack[0][1]}</${tag}>`;
                             stack[1] = [count, '']
                             top = 1;
                             break;
@@ -636,100 +805,186 @@ const boldAndItalic = (pack, end) => {
                 }
                 break;
             default:
-                stack[top][1] += char(pack.reader.now);
-                pack.reader.next(); break;
+                stack[top][1] += char(reader.now);
+                reader.next(); break;
         }
     }
 }
 
-const code = (pack) => {
-    var s = '<codeline class="markdown" style="display: inline"><code>';
-    while (pack.reader.next() != '`' && pack.reader.now != '\n' && !pack.reader.end) {
-        s += char(pack.reader.now);
+const code = () => {
+    let s = '<codeline class="markdown" style="display: inline"><code>';
+    while (reader.next() != '`' && reader.now != '\n' && !reader.end) {
+        s += char(reader.now);
     }
-    pack.reader.next();
-    return s + '</code></codeline>';
+    reader.next();
+    return `${s}</code></codeline>`;
 }
 
-const link = (pack) => {
-    var text = '';
-    pack.reader.next();
-    while (!pack.reader.end && pack.reader.now != ']' && pack.reader.now != '\n') {
-        switch (pack.reader.now) {
+const link = () => {
+    let text = '';
+    reader.next();
+    while (!reader.end && reader.now != ']' && reader.now != '\n') {
+        switch (reader.now) {
             case '`':
-                text += code(pack); break;
+                text += code(); break;
             case '*':
-                text += boldAndItalic(pack, ']'); break;
+                text += boldAndItalic(']'); break;
+            case '!':
+                c = reader.next();
+                if (c == '[')
+                    text += image();
+                else
+                    text += '!'
+                break;
             case '&':
-                text += escape(pack); break;
+                text += escape(); break;
             default:
-                text += char(pack.reader.now);
-                pack.reader.next(); break;
+                text += char(reader.now);
+                reader.next(); break;
         }
     }
-    if (pack.reader.end || pack.reader.now == '\n')
-        return '[' + text;
-    if (pack.reader.next() != '[' && pack.reader.now !='(')
-        return '[' + text + ']';
-    var link = '', c = pack.reader.now == '[' ? ']' : ')';
-    while (pack.reader.next() != c && pack.reader.now != ' '
-        && pack.reader.now != '\n' && !pack.reader.end)
-        link += pack.reader.now;
-    s = '<a class="markdown" href="';
-    if (c == ']') {
-        pack.reader.rollback(1);
-        while (pack.reader.next() != c && pack.reader.now != '\n' && !pack.reader.end)
-            ;
-        s += pack.links[link].link + '"';
-        if (pack.links[link].title != '')
-            s += ' title="' + pack.links[link].title + '"';
-        s += '>' + text + '</a>';
-        pack.reader.next();
+
+    // [not a link
+    if (reader.end || reader.now == '\n')
+        return `[${text}`;
+    // [not a link]
+    if (reader.next() != '[' && reader.now !='(')
+        return `[${text}]`;
+
+    let s = '<a class="markdown" href="';
+    // [text][
+    if (reader.now == '[') {
+        let link = '';
+        while (/[A-Za-z0-9\-]/.test(reader.next()) && !reader.end)
+            link += reader.now;
+        // [not][link
+        if (reader.end || reader.now != ']')
+            return `[${text}][${link}`;
+        // [text][link-name]
+        s += `${links[link].link}"`;
+        if (links[link].title)
+            s += ` title="${links[link].title}"`;
+        s += `>${text}</a>`;
+        reader.next();
         return s;
     }
-    var title = '';
-    if (pack.reader.now == ' ') {
-        while (pack.reader.next() == ' ' || pack.reader.now == '\t')
-            ;
-        if (pack.reader.now == '"')
-            while (pack.reader.next() != '"' && pack.reader.now != '\n' && !pack.reader.end)
-                title += pack.reader.now;
+    // [text](
+    else {
+        reader.next()
+        let [link, title, temp] = linkContent(')')
+        if (link) {
+            reader.rollback(1);
+            while (isEmpty(reader.next()))
+                temp += reader.now;
+            // [not](link
+            if (reader.end || reader.now != ')')
+                return `[${text}](${temp}`;
+
+            // [text](link "title")
+            reader.next();
+            s += `${link}"${title == '' ? '' : ` title="${title}"`}>${text}</a>`;
+            return s;
+        }
+        // [not](link
+        return `[${text}](${title}`;
     }
-    pack.reader.rollback(1);
-    while (pack.reader.next() != c && pack.reader.now != '\n' && !pack.reader.end)
-        ;
-    s += link + '"';
-    if (title != '')
-        s += ' title="' + title + '"';
-    s += '>' + text + '</a>';
-    pack.reader.next();
-    return s;
 }
 
-const br = (pack) => {
-    var s = pack.reader.next();
+const image = () => {
+    let alt = '', count = 0;
+    reader.next();
+    while (!reader.end && reader.now != ']' && reader.now != '\n') {
+        if (reader.now == '"')
+            alt += '\\"';
+        else
+            alt += char(reader.now);
+        ++count;
+        reader.next();
+    }
+
+    // ![not img
+    if (reader.end || reader.now == '\n') {
+        reader.rollback(count);
+        return '![' + text();
+    }
+    reader.next();
+    // ![image with only alt]
+    if (reader.end || !['(', '['].includes(reader.now)) {
+        if (alt.length)
+            return `<img class="markdown" alt="${alt}" />`;
+        // ![]
+        else
+            return '![]';
+    }
+
+    let s = `<img class="markdown" ${alt.length ? `alt="${alt}" ` : ''}src="`;
+    // ![alt][
+    if (reader.now == '[') {
+        let link = '';
+        while (/[A-Za-z0-9\-]/.test(reader.next()) && !reader.end)
+            link += reader.now;
+        // ![not][img
+        if (reader.end || reader.now != ']') {
+            reader.rollback(count + link.length + 2);
+            return '![' + text();
+        }
+        // ![alt][link-name]
+        s += `${links[link].link}"`;
+        if (links[link].title)
+            s += ` title="${links[link].title}"`
+        s += ' />';
+        reader.next();
+        return s;
+    }
+    // ![alt](
+    else {
+        reader.next()
+        let [link, title, temp] = linkContent(')')
+        if (link) {
+            reader.rollback(1);
+            while (isEmpty(reader.next()))
+                temp += reader.now;
+            // ![not](img
+            if (reader.end || reader.now != ')'){
+                reader.rollback(count + temp.length + 2);
+                return '![' + text();
+            }
+
+            // ![alt](link "title")
+            reader.next();
+            s += `${link}" ${title.length ? `title="${title}" ` : ''}/>`;
+            return s;
+        }
+        // ![not](img
+        reader.rollback(count + title.length + 2);
+        return '![' + text();
+    }
+}
+
+const br = () => {
+    let s = reader.next();
     if (s != 'b') {
-        pack.reader.rollback(1);
+        reader.rollback(1);
         return '&lt';
     }
-    s += pack.reader.next();
+    s += reader.next();
     if (s != 'br') {
-        pack.reader.rollback(2);
+        reader.rollback(2);
         return '&lt';
     }
-    pack.reader.next();
-    while (!pack.reader.end && pack.reader.now == ' ') {
+    reader.next();
+    while (!reader.end && reader.now == ' ') {
         s += ' ';
-        pack.reader.next();
+        reader.next();
     }
-    if (pack.reader.end || (pack.reader.now != '/' && pack.reader.now != '>'))
+    if (reader.end || (reader.now != '/' && reader.now != '>'))
         return '&lt;' + s;
-    s += pack.reader.now;
-    pack.reader.next();
+    s += reader.now;
+    reader.next();
     if (s[s.length - 1] == '>')
         return '<br />';
-    if (pack.reader.now == '>') {
-        pack.reader.next();
+    if (reader.now == '>') {
+        reader.next();
         return '<br />';
     }
     return '&lt;' + s;
