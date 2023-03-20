@@ -95,7 +95,7 @@ const char = (c) => {
         case '\'':
             return  '&apos;';
         case '"':
-            return '&quot';
+            return '&quotl;';
         case '&':
             return '&amp;'
         default:
