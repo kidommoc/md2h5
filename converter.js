@@ -1,4 +1,4 @@
-var reader, links;
+let reader, links;
 
 // please remove this line when not used in nodejs
 module.exports = (md) => convert(md)
@@ -590,6 +590,7 @@ const codeBlock1 = (jump) => {
         }
         if (reader.end)
             break;
+        s += '\n'
         reader.next();
         let count = jumpEmptyLines(jump + ' ');
         if (jumpPrefix(jump + ' ') === false)
@@ -617,6 +618,7 @@ const codeBlock2 = (jump) => {
         }
         if (reader.end)
             break;
+        s += '\n'
         reader.next();
         let count = jumpEmptyLines(jump);
         if (jumpPrefix(jump) === false)
